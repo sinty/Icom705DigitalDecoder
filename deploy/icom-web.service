@@ -1,0 +1,15 @@
+[Unit]
+Description=IC-705 decoder web dashboard (:8080)
+After=user@1000.service icom-demod.service
+Requires=user@1000.service
+
+[Service]
+User=sinty
+WorkingDirectory=/home/sinty
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/usr/bin/python3 /home/sinty/web.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

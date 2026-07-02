@@ -1,0 +1,26 @@
+[Unit]
+Description=dsd-fme digital decoder (TCP :7355 -> speakers)
+# строго после демодулятора: при обрыве TCP dsd-fme делает одну попытку
+# реконнекта и молча откатывается на pulse-вход (жуёт сырой IF как звук).
+# PartOf: рестарт демодулятора рестартует и декодер — свежее TCP-соединение.
+After=icom-demod.service
+Requires=icom-demod.service
+PartOf=icom-demod.service
+
+[Service]
+User=sinty
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# не стартуем, пока TCP-сервер GNU Radio не начал слушать
+ExecStartPre=/bin/sh -c 'until ss -tln | grep -q ":7355"; do sleep 0.5; done'
+TimeoutStartSec=60
+ExecStart=/usr/local/bin/dsd-fme -8 -i tcp \
+    -o pulse:alsa_output.platform-3f00b840.mailbox.stereo-fallback \
+    -J /home/sinty/dsd_live_iq_events.log
+StandardOutput=append:/home/sinty/dsd_live_iq.log
+StandardError=append:/home/sinty/dsd_live_iq.log
+Restart=always
+RestartSec=3
+Nice=-15
+
+[Install]
+WantedBy=multi-user.target
