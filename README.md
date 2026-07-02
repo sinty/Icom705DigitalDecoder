@@ -53,17 +53,33 @@ IC-705 (USB AF/IF Output = IF, 100% уровень)
 | `if_demod_offline.py`    | устаревший моно-вариант (история: до открытия I/Q) |
 | `sweep_params.sh`        | перебор центра/полосы с метриками dsd-fme (моно-эпоха) |
 
-## Запуск на Pi (10.1.1.44, radiodecoder)
+## Установка с нуля (Raspberry Pi OS Lite)
+
+На свежей системе (Debian 12/13), под обычным пользователем:
 
 ```bash
-nohup bash run_pipeline.sh > pipeline.log 2>&1 &
-nohup dsd-fme -fs -8 -i tcp \
-  -o pulse:alsa_output.platform-3f00b840.mailbox.stereo-fallback \
-  -J ~/dsd_events.log > ~/dsd.log 2>&1 &
-sudo renice -15 $(pgrep -x dsd-fme)
+sudo apt-get install -y git
+git clone https://github.com/sinty/Icom705DigitalDecoder.git   # приватный репо: git с токеном или scp копии
+cd Icom705DigitalDecoder && bash install.sh
 ```
 
-Настройки IC-705: `Connectors → USB AF/IF Output → AF/IF = IF`, уровень 100%.
+`install.sh` идемпотентен (повторный запуск = обновление): ставит пакеты
+(PipeWire, GNU Radio, тулчейн), включает linger, собирает mbelib и dsd-fme
+с обязательным `-O3` (без него декодер не успевает за реальным временем),
+копирует файлы, автодетектит синк колонок (имя зависит от модели Pi),
+подставляет пользователя в юниты, ставит systemd-юниты + logrotate и
+запускает сервисы. Дашборд после установки: `http://<ip-pi>:8080/`.
+
+Настройки IC-705: `Connectors → USB AF/IF Output → AF/IF = IF`, уровень 100%;
+`CI-V USB Baud Rate = Auto`, `CI-V Address = A4h`.
+
+## Управление сервисами
+
+```bash
+sudo systemctl status icom-demod icom-dsd icom-web
+sudo systemctl restart icom-demod    # PartOf: перезапустит и icom-dsd
+journalctl -u icom-web -f
+```
 
 ## Дальше (план)
 
