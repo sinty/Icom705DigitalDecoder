@@ -1,0 +1,26 @@
+# Ротация логов декодера IC-705 (класть в /etc/logrotate.d/icom)
+# copytruncate обязателен: dsd-fme и systemd-append держат файлы открытыми,
+# без него после ротации запись продолжится в удалённый inode.
+# Тейлер web.py переживает усечение (позиция сбрасывается на конец файла).
+
+# сырой лог dsd-fme: технический, растёт быстро — храним коротко
+/home/sinty/dsd_live_iq.log {
+    daily
+    maxsize 10M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+
+# событийный журнал звонков: компактный, история звонков уже дублируется
+# в SQLite (~/calls.db) — храним год на всякий случай
+/home/sinty/dsd_live_iq_events.log {
+    monthly
+    rotate 12
+    compress
+    missingok
+    notifempty
+    copytruncate
+}

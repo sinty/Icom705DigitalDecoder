@@ -212,6 +212,9 @@ class CallDB:
     def __init__(self, path):
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._lock = threading.Lock()
+        # WAL + NORMAL: последовательные записи и меньше fsync — бережнее к SD-карте
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("""CREATE TABLE IF NOT EXISTS calls(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT,            -- время передачи
