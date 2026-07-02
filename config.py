@@ -18,6 +18,8 @@ class Config:
     speaker_sink: str = "alsa_output.platform-3f00b840.mailbox.stereo-fallback"
     sql_udp_port: int = 7356     # управление сквелчем в if_demod.py
     dsd_log: str = "/home/sinty/dsd_live_iq.log"   # лог dsd-fme для статуса декодера
+    dsd_events_log: str = "/home/sinty/dsd_live_iq_events.log"  # журнал звонков dsd-fme (-J)
+    calls_db: str = "/home/sinty/calls.db"         # SQLite: история услышанных операторов
 
     # --- Веб ---
     web_host: str = "0.0.0.0"

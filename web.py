@@ -11,6 +11,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import threading
 import time
@@ -55,6 +56,8 @@ input[type=range]{width:100%}
  <div class="card"><h2>Декодер</h2>
    <div class="big"><span id="dsd" class="badge b-idle">—</span></div>
    <div class="row"><span>Talker Alias</span><b id="alias">—</b></div>
+   <div class="row" id="slotccRow" style="display:none"><span>Таймслот / CC</span><b id="slotcc">—</b></div>
+   <div class="row" id="tgidRow" style="display:none"><span>TG / ID</span><b id="tgid">—</b></div>
  </div>
  <div class="card"><h2>Управление</h2>
    <div class="row"><span>Громкость</span><span class="val" id="volv">—%</span></div>
@@ -67,6 +70,23 @@ input[type=range]{width:100%}
  <div style="padding:14px 14px 0"><h2 style="margin-bottom:6px">Водопад <span id="wfHdr" style="text-transform:none;color:var(--mut);font-weight:400"></span></h2></div>
  <canvas id="specCv" width="475" height="80"></canvas>
  <canvas id="wfCv" width="475" height="260"></canvas>
+</div>
+<div class="card" style="margin-top:12px"><h2>Журнал операторов</h2>
+ <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+  <thead><tr>
+   <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut);font-weight:500">Время</th>
+   <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut);font-weight:500">Частота</th>
+   <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut);font-weight:500">Вид</th>
+   <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut);font-weight:500">Позывной</th>
+   <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut);font-weight:500">ID</th>
+   <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut);font-weight:500">Параметры</th>
+  </tr></thead><tbody id="calls"></tbody>
+ </table></div>
+ <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+  <button id="newer" style="background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;padding:4px 12px;cursor:pointer">‹ новее</button>
+  <span id="pageinfo" style="color:var(--mut);font-size:13px">—</span>
+  <button id="older" style="background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;padding:4px 12px;cursor:pointer">старее ›</button>
+ </div>
 </div>
 </div><script>
 function debounce(f,ms){var t;return function(){clearTimeout(t);var a=arguments;t=setTimeout(function(){f.apply(null,a)},ms)}}
@@ -93,12 +113,50 @@ async function tick(){
  else if(d.dsd_state==='analog'){el.className='badge b-analog';el.textContent='АНАЛОГ';}
  else {el.className='badge b-idle';el.textContent='ТИШИНА';}
  document.getElementById('alias').textContent=d.talker_alias||'—';
+ // Таймслот/CC — только для DMR
+ var isDmr=d.dsd_proto==='DMR';
+ document.getElementById('slotccRow').style.display=isDmr?'':'none';
+ if(isDmr){
+   var sc='—';
+   if(d.dmr_slots&&d.dmr_slots.length){sc='TS'+d.dmr_slots.join('+TS')+(d.dmr_cc!=null?' · CC'+d.dmr_cc:'');}
+   else if(d.dmr_cc!=null){sc='CC'+d.dmr_cc;}
+   document.getElementById('slotcc').textContent=sc;
+ }
+ // TG/ID — для DMR и P25
+ var hasId=d.src_id!=null||d.tgt_id!=null;
+ document.getElementById('tgidRow').style.display=hasId?'':'none';
+ if(hasId){document.getElementById('tgid').textContent=(d.tgt_id||'?')+' / '+(d.src_id||'?');}
  if(!volDrag && d.volume_pct!=null){volEl.value=d.volume_pct;
    document.getElementById('volv').textContent=d.volume_pct+'%';}
  if(!sqlDrag && d.sql_db!=null){sqlEl.value=d.sql_db;
    document.getElementById('sqlv').textContent=d.sql_db+' дБ';}
 }
 tick();setInterval(tick,600);
+
+// --- журнал операторов (пагинация по 10) ---
+var callsOffset=0, callsTotal=0;
+function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+async function loadCalls(){
+ try{var r=await fetch('/api/calls?offset='+callsOffset);var d=await r.json();}catch(e){return;}
+ callsTotal=d.total;
+ document.getElementById('calls').innerHTML=d.rows.map(function(c){
+  var f=c.freq_hz?(c.freq_hz/1e6).toFixed(4):'—';
+  var t=(c.ts||'').slice(5);  // MM-DD HH:MM:SS
+  return '<tr>'+
+   '<td style="padding:5px 8px;border-bottom:1px solid var(--ln);white-space:nowrap">'+esc(t)+'</td>'+
+   '<td style="padding:5px 8px;border-bottom:1px solid var(--ln)">'+f+'</td>'+
+   '<td style="padding:5px 8px;border-bottom:1px solid var(--ln)">'+esc(c.proto)+'</td>'+
+   '<td style="padding:5px 8px;border-bottom:1px solid var(--ln)">'+esc(c.callsign||'—')+'</td>'+
+   '<td style="padding:5px 8px;border-bottom:1px solid var(--ln)">'+esc(c.radio_id||'—')+'</td>'+
+   '<td style="padding:5px 8px;border-bottom:1px solid var(--ln);color:var(--mut)">'+esc(c.details||'')+'</td>'+
+  '</tr>';}).join('');
+ var page=Math.floor(callsOffset/10)+1, pages=Math.max(1,Math.ceil(callsTotal/10));
+ document.getElementById('pageinfo').textContent='стр. '+page+' из '+pages+' ('+callsTotal+')';
+}
+document.getElementById('newer').onclick=function(){callsOffset=Math.max(0,callsOffset-10);loadCalls();};
+document.getElementById('older').onclick=function(){if(callsOffset+10<callsTotal)callsOffset+=10;loadCalls();};
+loadCalls();
+setInterval(function(){if(callsOffset===0)loadCalls();},3000);  // автообновление первой страницы
 
 // --- водопад (палитра/отрисовка как в RadioEcho) ---
 (function(){
@@ -148,6 +206,93 @@ tick();setInterval(tick,600);
 </script></body></html>"""
 
 
+class CallDB:
+    """SQLite-журнал услышанных операторов (по строке на передачу)."""
+
+    def __init__(self, path):
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS calls(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT,            -- время передачи
+            freq_hz INTEGER,    -- частота приёма (NULL для импорта истории)
+            proto TEXT,         -- DMR / D-STAR / P25 / YSF
+            callsign TEXT,      -- позывной (Talker Alias / D-STAR SRC), если был
+            radio_id TEXT,      -- цифровой ID, если был
+            details TEXT)""")   # слот/CC/TG и прочие атрибуты вида связи
+        self._conn.commit()
+
+    def empty(self):
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 0
+
+    def insert(self, ts, freq_hz, proto, callsign, radio_id, details):
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO calls(ts, freq_hz, proto, callsign, radio_id, details) "
+                "VALUES(?,?,?,?,?,?)", (ts, freq_hz, proto, callsign, radio_id, details))
+            self._conn.commit()
+            return cur.lastrowid
+
+    def set_callsign(self, call_id, callsign):
+        with self._lock:
+            self._conn.execute("UPDATE calls SET callsign=? WHERE id=?",
+                               (callsign, call_id))
+            self._conn.commit()
+
+    def page(self, offset, limit):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, freq_hz, proto, callsign, radio_id, details FROM calls "
+                "ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+            total = self._conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0]
+        return {"total": total, "rows": [
+            {"ts": r[0], "freq_hz": r[1], "proto": r[2], "callsign": r[3],
+             "radio_id": r[4], "details": r[5]} for r in rows]}
+
+
+# --- разбор строк событийного лога dsd-fme (-J) ---
+# "2026-07-02 19:34:32 DMR TGT: 00002501; SRC: 02502766; CC: 01; Group;  Slot 1;"
+# вид звонка ("Group;") бывает опущен
+RE_DMR = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) DMR TGT: (\S+?); SRC: (\S+?); CC: (\d+);(?:\s+(\w+);)?\s+Slot (\d)")
+# "2026-07-02 19:37:14 DSTAR TGT: CQCQCQ   SRC: RA0XXX   ID52"
+RE_DSTAR = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) DSTAR TGT: (\S+)\s+SRC: (\S+)\s*(.*)$")
+# любой другой вид с датой в начале — пишем как есть
+RE_OTHER = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (\S+) (.*)$")
+RE_ALIAS = re.compile(r"^\s*Talker Alias:\s*(.+?);?\s*$")
+
+
+def parse_event_line(line):
+    """Строка события -> ("alias", позывной) | ("call", запись) | None.
+
+    Строка звонка пишется dsd-fme в КОНЦЕ передачи, а Talker Alias —
+    отдельной строкой СЛЕДОМ за ней, поэтому alias относится к
+    предыдущей записи звонка.
+    """
+    m = RE_ALIAS.match(line)
+    if m:
+        return ("alias", m.group(1).strip())
+    m = RE_DMR.match(line)
+    if m:
+        ts, tgt, src, cc, kind, slot = m.groups()
+        details = f"TS{slot} CC{int(cc)} TG:{int(tgt)}" + (f" {kind}" if kind else "")
+        return ("call", (ts, "DMR", None, str(int(src)), details))
+    m = RE_DSTAR.match(line)
+    if m:
+        ts, tgt, src, rest = m.groups()
+        details = f"DST:{tgt}" + (f" {rest.strip()}" if rest.strip() else "")
+        return ("call", (ts, "D-STAR", src, None, details))
+    m = RE_OTHER.match(line)
+    if m:
+        ts, proto, rest = m.groups()
+        if proto in ("DSD-FME", "Any"):   # служебные строки старта
+            return None
+        return ("call", (ts, proto, None, None, rest.strip()))
+    return None
+
+
 class Dashboard:
     """Фоновая часть: CI-V (частота/режим/S-метр + водопад), громкость, SQL, статус dsd."""
 
@@ -166,9 +311,58 @@ class Dashboard:
         self.dsd_state = "idle"     # idle | analog | digital
         self.dsd_proto = None       # DMR | D-STAR | P25p1 | P25p2 | YSF | ...
         self.talker_alias = None
+        self.dmr_slots = []         # слоты с голосом сейчас: [1], [2] или [1, 2]
+        self.dmr_cc = None          # Color Code текущей передачи
+        self.src_id = None          # ID источника (DMR/P25)
+        self.tgt_id = None          # группа/адресат (DMR/P25)
 
         self._sql_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sql_sock.settimeout(0.5)
+
+        self.calls = CallDB(cfg.calls_db)
+        self._last_call_id = None
+        if self.calls.empty():
+            self._import_events_history()
+
+    def _handle_event_line(self, line, freq_hz):
+        """Обработать строку событийного лога: звонок -> insert, alias -> update
+        предыдущей записи (dsd-fme пишет alias следом за строкой звонка)."""
+        ev = parse_event_line(line.rstrip("\n"))
+        if ev is None:
+            return
+        kind, payload = ev
+        if kind == "call":
+            ts, proto, callsign, radio_id, details = payload
+            self._last_call_id = self.calls.insert(
+                ts, freq_hz, proto, callsign, radio_id, details)
+        elif kind == "alias" and self._last_call_id is not None:
+            self.calls.set_callsign(self._last_call_id, payload)
+
+    def _import_events_history(self):
+        """Разовый импорт существующего событийного лога (частота неизвестна)."""
+        try:
+            with open(self.cfg.dsd_events_log, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    self._handle_event_line(line, None)
+        except OSError:
+            pass
+
+    def events_tail_loop(self):
+        """Тейлер событийного лога dsd-fme: новые звонки -> SQLite (с текущей частотой)."""
+        pos = None
+        while True:
+            try:
+                with open(self.cfg.dsd_events_log, encoding="utf-8", errors="ignore") as f:
+                    f.seek(0, os.SEEK_END)
+                    if pos is None or pos > f.tell():
+                        pos = f.tell()      # первый запуск или файл усечён
+                    f.seek(pos)
+                    for line in f:
+                        self._handle_event_line(line, self.freq)
+                    pos = f.tell()
+            except OSError:
+                pass
+            time.sleep(1.0)
 
     # --- опрос ---
     def poll_loop(self):
@@ -247,6 +441,14 @@ class Dashboard:
                     if m:
                         proto = {"DSTAR": "D-STAR"}.get(m.group(1), m.group(1))
                 break
+        # атрибуты (alias/слоты/CC/ID) ищем ТОЛЬКО в текущей непрерывной цифровой
+        # сессии — от последнего "no sync" до конца, иначе ложный синк на шуме
+        # (например YSF) вытаскивает alias давно прошедшей DMR-передачи
+        cur = lines
+        for i in range(len(lines) - 1, -1, -1):
+            if "no sync" in lines[i]:
+                cur = lines[i + 1:]
+                break
         # цифра "протухает": если файл не менялся 3с, а последний Sync старый — не цифра
         try:
             age = time.time() - os.path.getmtime(self.cfg.dsd_log)
@@ -259,12 +461,37 @@ class Dashboard:
             state = "analog" if self.smeter_raw > 5 else "idle"
         self.dsd_state = state
         self.dsd_proto = proto if state == "digital" else None
+        # DMR: активные голосом слоты и Color Code из свежих строк.
+        # Слот текущей строки взят в [...], КАПС ([SLOT2]) = в нём голос (VC-кадр).
+        slots, cc = set(), None
+        if state == "digital" and proto == "DMR":
+            for line in cur[-40:]:
+                if "Sync:" not in line or "DMR" not in line:
+                    continue
+                m = re.search(r"Color Code=(\d+)", line)
+                if m:
+                    cc = int(m.group(1))
+                m = re.search(r"\[(SLOT[12])\].*VC\d", line)
+                if m:
+                    slots.add(int(m.group(1)[-1]))
+        self.dmr_slots = sorted(slots)
+        self.dmr_cc = cc
+        # ID источника и группы — у DMR и P25 общий формат "TGT=... SRC=..."
+        src, tgt = None, None
+        if state == "digital" and (proto == "DMR" or (proto or "").startswith("P25")):
+            for line in reversed(cur[-40:]):
+                m = re.search(r"TGT=(\d+)\s+SRC=(\d+)", line)
+                if m:
+                    tgt, src = m.group(1), m.group(2)
+                    break
+        self.src_id = src
+        self.tgt_id = tgt
         # позывной — только свежий (последние 60 строк) и своего протокола:
         # DMR несёт Talker Alias, D-STAR — поле SRC
         alias = None
         if state == "digital":
             pattern = r"SRC:\s*(\S+)" if proto == "D-STAR" else r"Talker Alias:\s*(\S+)"
-            for line in reversed(lines[-60:]):
+            for line in reversed(cur[-60:]):
                 m = re.search(pattern, line)
                 if m:
                     alias = m.group(1)
@@ -282,10 +509,15 @@ class Dashboard:
             "dsd_state": self.dsd_state,
             "dsd_proto": self.dsd_proto,
             "talker_alias": self.talker_alias,
+            "dmr_slots": self.dmr_slots,
+            "dmr_cc": self.dmr_cc,
+            "src_id": self.src_id,
+            "tgt_id": self.tgt_id,
         }
 
     def start_background(self):
         threading.Thread(target=self.poll_loop, daemon=True).start()
+        threading.Thread(target=self.events_tail_loop, daemon=True).start()
 
     def close(self):
         try:
@@ -313,6 +545,20 @@ def make_handler(dash):
                 self._send(200, "text/html; charset=utf-8", PAGE.encode("utf-8"))
             elif path == "/api/state":
                 body = json.dumps(dash.snapshot(), ensure_ascii=False).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", body)
+            elif path == "/api/calls":
+                qs = {}
+                if "?" in self.path:
+                    for kv in self.path.split("?", 1)[1].split("&"):
+                        if "=" in kv:
+                            k, v = kv.split("=", 1)
+                            qs[k] = v
+                try:
+                    offset = max(0, int(qs.get("offset", 0)))
+                except ValueError:
+                    offset = 0
+                body = json.dumps(dash.calls.page(offset, 10),
+                                  ensure_ascii=False).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", body)
             elif path == "/events":
                 self.send_response(200)
