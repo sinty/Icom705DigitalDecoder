@@ -31,7 +31,8 @@ from gnuradio import gr, blocks, filter as gr_filter, analog, network
 
 
 SAMPLE_RATE = 48000
-IF_CENTER_HZ = 12140.0        # центр несущей в комплексном спектре I+jQ (измерено)
+IF_CENTER_HZ = 12060.0        # компромиссный центр: DMR-рация 12140, D-STAR ID-52 11985;
+                              # свип на эталонах: DMR audio_err 63 (vs 101 на 12140), D-STAR 0 везде
 CHANNEL_HALF_BW_HZ = 3500.0   # полоса под DMR 4FSK (внешний символ 1944 Гц + скаты)
 TRANSITION_HZ = 1500.0
 MAX_DEVIATION_HZ = 1944.0     # номинальная макс. девиация DMR: внешний символ -> ±1.0

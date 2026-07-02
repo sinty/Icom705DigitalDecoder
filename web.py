@@ -89,7 +89,7 @@ async function tick(){
  document.getElementById('su').textContent=d.s_units||'S0';
  document.getElementById('mbar').style.width=Math.min(100,(d.smeter_raw||0)/255*100)+'%';
  var el=document.getElementById('dsd');
- if(d.dsd_state==='digital'){el.className='badge b-dig';el.textContent='ЦИФРА (DMR)';}
+ if(d.dsd_state==='digital'){el.className='badge b-dig';el.textContent='ЦИФРА'+(d.dsd_proto?' ('+d.dsd_proto+')':'');}
  else if(d.dsd_state==='analog'){el.className='badge b-analog';el.textContent='АНАЛОГ';}
  else {el.className='badge b-idle';el.textContent='ТИШИНА';}
  document.getElementById('alias').textContent=d.talker_alias||'—';
@@ -164,6 +164,7 @@ class Dashboard:
         self.volume_pct = None
         self.sql_db = None
         self.dsd_state = "idle"     # idle | analog | digital
+        self.dsd_proto = None       # DMR | D-STAR | P25p1 | P25p2 | YSF | ...
         self.talker_alias = None
 
         self._sql_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -234,14 +235,17 @@ class Dashboard:
             self.dsd_state = "idle"
             return
         lines = tail.splitlines()
-        # последняя строка с Sync: определяет цифру; свежесть — по росту файла
-        state = "idle"
+        # последняя строка с Sync: определяет цифру и протокол
+        state, proto = "idle", None
         for line in reversed(lines):
             if "Sync:" in line:
                 if "no sync" in line:
                     state = "analog_or_idle"
                 else:
                     state = "digital"
+                    m = re.search(r"Sync:\s*[+-]?([A-Za-z0-9]+)", line)
+                    if m:
+                        proto = {"DSTAR": "D-STAR"}.get(m.group(1), m.group(1))
                 break
         # цифра "протухает": если файл не менялся 3с, а последний Sync старый — не цифра
         try:
@@ -254,11 +258,18 @@ class Dashboard:
             # сквелч открыт (S-метр выше порога) -> аналог, иначе тишина
             state = "analog" if self.smeter_raw > 5 else "idle"
         self.dsd_state = state
-        for line in reversed(lines):
-            m = re.search(r"Talker Alias:\s*(\S+)", line)
-            if m:
-                self.talker_alias = m.group(1)
-                break
+        self.dsd_proto = proto if state == "digital" else None
+        # позывной — только свежий (последние 60 строк) и своего протокола:
+        # DMR несёт Talker Alias, D-STAR — поле SRC
+        alias = None
+        if state == "digital":
+            pattern = r"SRC:\s*(\S+)" if proto == "D-STAR" else r"Talker Alias:\s*(\S+)"
+            for line in reversed(lines[-60:]):
+                m = re.search(pattern, line)
+                if m:
+                    alias = m.group(1)
+                    break
+        self.talker_alias = alias
 
     def snapshot(self):
         return {
@@ -269,6 +280,7 @@ class Dashboard:
             "volume_pct": self.volume_pct,
             "sql_db": self.sql_db,
             "dsd_state": self.dsd_state,
+            "dsd_proto": self.dsd_proto,
             "talker_alias": self.talker_alias,
         }
 
