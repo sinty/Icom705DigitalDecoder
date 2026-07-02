@@ -201,6 +201,18 @@ class CIV:
         b = self._txn([0x06, code], wait=0.08)
         return b is not None
 
+    def read_band_stack(self, band, reg=1):
+        """Band-stacking регистр (1A 01): (freq_hz, mode) последнего
+        использования диапазона. Коды IC-705 (проверено опросом):
+        1..10 = 160/80/40/30/20/17/15/12/10/6м, 11=WFM, 12=AIR, 13=2м, 14=70см."""
+        def bcd(n):
+            return ((n // 10) << 4) | (n % 10)
+        b = self._txn([0x1A, 0x01, bcd(band), bcd(reg)], wait=0.4)
+        if not b or len(b) < 10 or b[:2] != bytes([0x1A, 0x01]):
+            return None
+        digits = "".join("%02X" % x for x in reversed(b[4:9]))
+        return int(digits), MODES.get(b[9], "FM")
+
     def read_squelch_open(self):
         """True = сквелч открыт (сигнал есть), False = закрыт, None = нет ответа."""
         b = self._txn([0x15, 0x01])

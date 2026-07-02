@@ -21,6 +21,8 @@ class Config:
     dsd_events_log: str = "/home/sinty/dsd_live_iq_events.log"  # журнал звонков dsd-fme (-J)
     calls_db: str = "/home/sinty/calls.db"         # SQLite: история услышанных операторов
 
+    tune_step_hz: int = 12500    # округление частоты при клике по скопу (0 = без округления)
+
     # --- Веб ---
     web_host: str = "0.0.0.0"
     web_port: int = 8080

@@ -67,8 +67,11 @@ input[type=range]{width:100%}
  </div>
 </div>
 <div class="card" style="margin-top:12px;padding:0;overflow:hidden">
- <div style="padding:14px 14px 0"><h2 style="margin-bottom:6px">Водопад <span id="wfHdr" style="text-transform:none;color:var(--mut);font-weight:400"></span></h2></div>
- <canvas id="specCv" width="475" height="80"></canvas>
+ <div style="padding:14px 14px 0">
+  <h2 style="margin-bottom:6px">Панорама <span id="wfHdr" style="text-transform:none;color:var(--mut);font-weight:400"></span></h2>
+  <div id="bands" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px"></div>
+ </div>
+ <canvas id="specCv" width="475" height="96" style="cursor:crosshair"></canvas>
  <canvas id="wfCv" width="475" height="260"></canvas>
 </div>
 <div class="card" style="margin-top:12px"><h2>Журнал операторов</h2>
@@ -105,6 +108,7 @@ sqlEl.addEventListener('input',debounce(function(){
 async function tick(){
  try{var r=await fetch('/api/state');var d=await r.json();}catch(e){return;}
  document.getElementById('freq').textContent=d.freq_mhz?d.freq_mhz.toFixed(4)+' MHz':'—';
+ if(d.freq_mhz){rxFreqHz=d.freq_mhz*1e6;}
  document.getElementById('mode').textContent=d.mode||'—';
  document.getElementById('su').textContent=d.s_units||'S0';
  document.getElementById('mbar').style.width=Math.min(100,(d.smeter_raw||0)/255*100)+'%';
@@ -158,7 +162,8 @@ document.getElementById('older').onclick=function(){if(callsOffset+10<callsTotal
 loadCalls();
 setInterval(function(){if(callsOffset===0)loadCalls();},3000);  // автообновление первой страницы
 
-// --- водопад (палитра/отрисовка как в RadioEcho) ---
+// --- панорама: спектр с заливкой (как FFT-зона IC-705), сетка, RX-маркер, водопад ---
+var wfCenterHz=null, wfSpanHz=null, rxFreqHz=null;
 (function(){
  var wf=document.getElementById('wfCv'), wctx=wf.getContext('2d');
  var sp=document.getElementById('specCv'), sctx=sp.getContext('2d');
@@ -173,14 +178,58 @@ setInterval(function(){if(callsOffset===0)loadCalls();},3000);  // автооб�
  }
  var pal=new Array(161);
  for(var v=0;v<=160;v++){ var c=palette(v); pal[v]=[c[0]|0,c[1]|0,c[2]|0]; }
- function pushRow(row){
+ var avg=null;                       // усреднение 2-4 развёрток, как у IC-705
+ function gridStepHz(span){          // круглый шаг сетки: 4-8 линий
+   var raw=span/6, p=Math.pow(10,Math.floor(Math.log10(raw)));
+   var m=raw/p;
+   return (m<1.5?1:(m<3.5?2:5))*p;
+ }
+ function drawSpectrum(){
+   if(!avg) return;
    sctx.fillStyle='#0a0e17'; sctx.fillRect(0,0,W,SH);
-   sctx.strokeStyle='#4ea1ff'; sctx.lineWidth=1; sctx.beginPath();
-   for(var x=0;x<row.length;x++){
-     var y=SH-(row[x]/160)*SH;
+   // сетка частот с подписями
+   if(wfCenterHz&&wfSpanHz){
+     var lo=wfCenterHz-wfSpanHz/2, step=gridStepHz(wfSpanHz);
+     sctx.strokeStyle='rgba(140,160,190,.18)'; sctx.fillStyle='rgba(140,160,190,.6)';
+     sctx.font='9px system-ui'; sctx.textAlign='center';
+     for(var f=Math.ceil(lo/step)*step; f<lo+wfSpanHz; f+=step){
+       var gx=(f-lo)/wfSpanHz*W;
+       sctx.beginPath(); sctx.moveTo(gx,0); sctx.lineTo(gx,SH); sctx.stroke();
+       sctx.fillText((f/1e6).toFixed(3),gx,9);
+     }
+     // горизонтальные уровни
+     for(var gy=SH/4;gy<SH;gy+=SH/4){
+       sctx.beginPath(); sctx.moveTo(0,gy); sctx.lineTo(W,gy); sctx.stroke();
+     }
+   }
+   // заливка спектра + яркая кромка
+   var g=sctx.createLinearGradient(0,0,0,SH);
+   g.addColorStop(0,'rgba(78,161,255,.55)'); g.addColorStop(1,'rgba(20,50,110,.25)');
+   sctx.beginPath(); sctx.moveTo(0,SH);
+   for(var x=0;x<avg.length;x++){ sctx.lineTo(x,SH-(avg[x]/160)*SH); }
+   sctx.lineTo(avg.length-1,SH); sctx.closePath();
+   sctx.fillStyle=g; sctx.fill();
+   sctx.strokeStyle='#9fd0ff'; sctx.lineWidth=1; sctx.beginPath();
+   for(var x=0;x<avg.length;x++){
+     var y=SH-(avg[x]/160)*SH;
      if(x===0) sctx.moveTo(x,y); else sctx.lineTo(x,y);
    }
    sctx.stroke();
+   // RX-маркер
+   if(wfCenterHz&&wfSpanHz&&rxFreqHz){
+     var mx=(rxFreqHz-(wfCenterHz-wfSpanHz/2))/wfSpanHz*W;
+     if(mx>=0&&mx<=W){
+       sctx.strokeStyle='#ff6b6b'; sctx.lineWidth=1;
+       sctx.beginPath(); sctx.moveTo(mx,0); sctx.lineTo(mx,SH); sctx.stroke();
+       sctx.fillStyle='#ff6b6b'; sctx.font='9px system-ui'; sctx.textAlign='center';
+       sctx.fillText('R',mx,8);
+     }
+   }
+ }
+ function pushRow(row){
+   if(!avg||avg.length!==row.length){avg=row.slice();}
+   else{for(var i=0;i<row.length;i++)avg[i]=avg[i]*0.6+row[i]*0.4;}
+   drawSpectrum();
    wctx.drawImage(wf,0,0,W,WH-1,0,1,W,WH-1);
    var img=wctx.createImageData(W,1);
    for(var x=0;x<row.length && x<W;x++){
@@ -194,6 +243,8 @@ setInterval(function(){if(callsOffset===0)loadCalls();},3000);  // автооб�
    es.onerror=function(){};
    es.onmessage=function(e){
      var d=JSON.parse(e.data);
+     if(d.center_mhz){wfCenterHz=d.center_mhz*1e6;}
+     if(d.span_khz){wfSpanHz=d.span_khz*1e3;}
      pushRow(d.row);
      if(d.center_mhz){
        document.getElementById('wfHdr').textContent=
@@ -202,6 +253,30 @@ setInterval(function(){if(callsOffset===0)loadCalls();},3000);  // автооб�
    };
  }
  connect();
+ // клик по спектру или водопаду -> перестройка радио
+ function tuneClick(ev){
+   if(!wfCenterHz||!wfSpanHz) return;
+   var r=ev.target.getBoundingClientRect();
+   var x=(ev.clientX-r.left)/r.width;
+   var f=wfCenterHz-wfSpanHz/2+x*wfSpanHz;
+   fetch('/api/tune',{method:'POST',body:JSON.stringify({freq_hz:Math.round(f)})});
+ }
+ sp.addEventListener('click',tuneClick);
+ wf.addEventListener('click',tuneClick);
+})();
+
+// --- кнопки диапазонов (band-stacking IC-705) ---
+(function(){
+ var bands=[['160м',1],['80м',2],['40м',3],['30м',4],['20м',5],['17м',6],['15м',7],
+            ['12м',8],['10м',9],['6м',10],['WFM',11],['AIR',12],['2м',13],['70см',14]];
+ var box=document.getElementById('bands');
+ bands.forEach(function(b){
+  var btn=document.createElement('button');
+  btn.textContent=b[0];
+  btn.style.cssText='background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px';
+  btn.onclick=function(){fetch('/api/band',{method:'POST',body:JSON.stringify({band:b[1]})});};
+  box.appendChild(btn);
+ });
 })();
 </script></body></html>"""
 
@@ -371,18 +446,37 @@ class Dashboard:
     def poll_loop(self):
         n = 0
         while True:
-            raw = self.civ.read_smeter_raw()
-            if raw is not None:
-                self.smeter_raw = raw
-            if n % 5 == 0:   # частота/режим/громкость/sql — реже
-                f = self.civ.read_frequency()
-                if f:
-                    self.freq = f
-                m = self.civ.read_mode()
-                if m:
-                    self.mode = m
-                self.volume_pct = self._get_volume()
-                self._refresh_sql()
+            try:
+                raw = self.civ.read_smeter_raw()
+                if raw is not None:
+                    self.smeter_raw = raw
+                if n % 5 == 0:   # частота/режим/громкость/sql — реже
+                    f = self.civ.read_frequency()
+                    if f:
+                        self.freq = f
+                    m = self.civ.read_mode()
+                    if m:
+                        self.mode = m
+                    self.volume_pct = self._get_volume()
+                    self._refresh_sql()
+            except Exception as e:
+                # CI-V порт умер (USB-переподключение радио и т.п.) —
+                # переоткрываем с автопоиском, пока не оживёт
+                print(f"CI-V потерян ({e}), переподключение...", flush=True)
+                try:
+                    self.civ.close()
+                except Exception:
+                    pass
+                while True:
+                    time.sleep(5)
+                    try:
+                        self.civ = CIV(self.cfg)
+                        self.civ.set_scope_callback(self.scope.feed)
+                        self.civ.set_scope_output(True)
+                        print("CI-V переподключён", flush=True)
+                        break
+                    except Exception:
+                        continue
             self._refresh_dsd_state()
             n += 1
             time.sleep(0.2)
@@ -419,6 +513,26 @@ class Dashboard:
             self.sql_db = float(data.split()[1])
         except Exception:
             pass
+
+    def tune(self, freq_hz):
+        """Перестроить радио (клик по скопу), с округлением к сетке каналов."""
+        step = self.cfg.tune_step_hz
+        if step:
+            freq_hz = round(freq_hz / step) * step
+        freq_hz = int(freq_hz)
+        if self.civ.set_frequency(freq_hz):
+            self.freq = freq_hz
+
+    def select_band(self, band):
+        """Кнопка диапазона: частота и мода из band-stacking регистра радио."""
+        bs = self.civ.read_band_stack(int(band))
+        if not bs:
+            return
+        freq, mode = bs
+        if self.civ.set_frequency(freq):
+            self.freq = freq
+        self.civ.set_mode(mode)
+        self.mode = mode
 
     def _refresh_dsd_state(self):
         """Статус декодера по хвосту лога dsd-fme."""
@@ -599,6 +713,10 @@ def make_handler(dash):
                 dash.set_volume(body["pct"])
             elif self.path == "/api/sql" and "db" in body:
                 dash.set_sql(body["db"])
+            elif self.path == "/api/tune" and "freq_hz" in body:
+                dash.tune(body["freq_hz"])
+            elif self.path == "/api/band" and "band" in body:
+                dash.select_band(body["band"])
             else:
                 self._send(404, "text/plain", b"not found")
                 return
