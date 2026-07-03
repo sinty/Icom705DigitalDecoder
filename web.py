@@ -44,6 +44,9 @@ input[type=range]{width:100%}
 .tsep{color:var(--ln)}
 #gear{background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;
   padding:4px 10px;cursor:pointer;font-size:15px;margin-left:auto}
+.chbtn{background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;
+  padding:3px 10px;cursor:pointer;font-size:12px;margin-left:4px}
+.chbtn.on{background:#1c3050;border-color:var(--acc);color:var(--acc)}
 #specCv{height:80px;border-bottom:1px solid var(--ln)}
 #wfCv{height:260px}
 #wfCv,#specCv{display:block;width:100%}
@@ -66,6 +69,13 @@ input[type=range]{width:100%}
  <input type="range" id="vol" min="0" max="100" step="1">
  <div class="row"><span>Сквелч</span><span class="val" id="sqlv">— дБ</span></div>
  <input type="range" id="sql" min="-40" max="0" step="0.5">
+ <div class="row" style="margin-top:10px"><span>Каналы голоса (DMR-слоты)</span>
+  <span id="chBtns">
+   <button data-ch="both" class="chbtn">Оба</button>
+   <button data-ch="left" class="chbtn">TS1 (лев.)</button>
+   <button data-ch="right" class="chbtn">TS2 (прав.)</button>
+  </span>
+ </div>
 </div>
 <div class="card" style="padding:0;overflow:hidden">
  <div style="padding:10px 14px 0">
@@ -99,6 +109,16 @@ document.getElementById('gear').onclick=function(){
  var s=document.getElementById('settings');
  s.style.display=(s.style.display==='none')?'':'none';
 };
+document.querySelectorAll('.chbtn').forEach(function(b){
+ b.onclick=function(){
+  fetch('/api/channels',{method:'POST',body:JSON.stringify({mode:b.dataset.ch})});
+ };
+});
+function markChannels(mode){
+ document.querySelectorAll('.chbtn').forEach(function(b){
+  b.className='chbtn'+(b.dataset.ch===mode?' on':'');
+ });
+}
 var volEl=document.getElementById('vol'), sqlEl=document.getElementById('sql');
 var volDrag=false, sqlDrag=false;
 volEl.addEventListener('pointerdown',()=>volDrag=true);
@@ -182,6 +202,7 @@ async function tick(){
    document.getElementById('volv').textContent=d.volume_pct+'%';}
  if(!sqlDrag && d.sql_db!=null){sqlEl.value=d.sql_db;
    document.getElementById('sqlv').textContent=d.sql_db+' дБ';}
+ markChannels(d.audio_channels||'both');
 }
 tick();setInterval(tick,600);
 
@@ -434,6 +455,7 @@ class Dashboard:
         self.smeter_raw = 0
         self.volume_pct = None
         self.sql_db = None
+        self.audio_channels = "both"   # both | left (TS1) | right (TS2)
         self.dsd_state = "idle"     # idle | analog | digital
         self.dsd_proto = None       # DMR | D-STAR | P25p1 | P25p2 | YSF | ...
         self.talker_alias = None
@@ -538,6 +560,39 @@ class Dashboard:
             return int(m.group(1)) if m else None
         except Exception:
             return None
+
+    def _dsd_sink_input(self):
+        """id стерео-потока dsd-fme (декодированный голос; TS1=левый, TS2=правый).
+        Аналоговый монитор идёт отдельным mono-потоком DSD-FME3 — его не трогаем."""
+        try:
+            out = subprocess.run(["pactl", "list", "sink-inputs"],
+                                 capture_output=True, text=True, timeout=2).stdout
+        except Exception:
+            return None
+        cur = None
+        for line in out.splitlines():
+            m = re.match(r"Sink Input #(\d+)", line.strip())
+            if m:
+                cur = m.group(1)
+            if 'application.name = "DSD-FME"' in line and cur:
+                return cur
+        return None
+
+    def set_channels(self, mode):
+        """Мьют одного из стерео-каналов декодированного голоса (выбор DMR-слота)."""
+        vols = {"both": ("100%", "100%"),
+                "left": ("100%", "0%"),
+                "right": ("0%", "100%")}.get(mode)
+        if not vols:
+            return
+        sid = self._dsd_sink_input()
+        if sid:
+            try:
+                subprocess.run(["pactl", "set-sink-input-volume", sid, vols[0], vols[1]],
+                               timeout=2)
+            except Exception:
+                return
+        self.audio_channels = mode
 
     def set_volume(self, pct):
         pct = max(0, min(100, int(pct)))
@@ -671,6 +726,7 @@ class Dashboard:
             "s_units": s_units(self.smeter_raw, self.cfg),
             "volume_pct": self.volume_pct,
             "sql_db": self.sql_db,
+            "audio_channels": self.audio_channels,
             "dsd_state": self.dsd_state,
             "dsd_proto": self.dsd_proto,
             "talker_alias": self.talker_alias,
@@ -765,6 +821,8 @@ def make_handler(dash):
                 dash.tune(body["freq_hz"])
             elif self.path == "/api/band" and "band" in body:
                 dash.select_band(body["band"])
+            elif self.path == "/api/channels" and "mode" in body:
+                dash.set_channels(body["mode"])
             else:
                 self._send(404, "text/plain", b"not found")
                 return
