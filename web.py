@@ -26,50 +26,52 @@ PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <title>IC-705 Decoder</title><style>
 :root{--bg:#0f1420;--card:#1a2130;--ln:#2a3348;--fg:#e6ecf5;--mut:#8b98b0;--acc:#4ea1ff;--ok:#39d98a;--hot:#ff6b6b}
 *{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
-.wrap{max-width:960px;margin:0 auto;padding:16px}
-h1{font-size:18px;margin:0 0 12px}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.wrap{max-width:960px;margin:0 auto;padding:10px 16px}
 .card{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:14px}
 .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin:0 0 10px}
-.big{font-size:24px;font-weight:600}
 .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-weight:600;font-size:13px}
 .b-idle{background:#233;color:var(--mut)}.b-analog{background:#1c3050;color:var(--acc)}.b-dig{background:#123a2a;color:var(--ok)}
-.meter{height:22px;background:#0c101a;border-radius:6px;overflow:hidden;border:1px solid var(--ln)}
-.meter>div{height:100%;background:linear-gradient(90deg,#2e7d5b,#4ea1ff,#ff6b6b);transition:width .2s}
 .row{display:flex;justify-content:space-between;align-items:center;margin:6px 0}
 input[type=range]{width:100%}
 .val{color:var(--acc);font-weight:600}
+.topbar{display:flex;gap:14px;align-items:center;flex-wrap:nowrap;background:var(--card);
+  border:1px solid var(--ln);border-radius:10px;padding:0 14px;margin-bottom:10px;
+  height:46px;overflow:hidden;white-space:nowrap}
+.topbar>*{flex-shrink:0}
+.topbar .dsdinfo{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  display:flex;gap:8px;align-items:center;white-space:nowrap}
+.freqbig{font-size:22px;font-weight:700}
+.tsep{color:var(--ln)}
+#gear{background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;
+  padding:4px 10px;cursor:pointer;font-size:15px;margin-left:auto}
 #specCv{height:80px;border-bottom:1px solid var(--ln)}
 #wfCv{height:260px}
 #wfCv,#specCv{display:block;width:100%}
 </style></head><body><div class="wrap">
-<h1>IC-705 Digital Decoder</h1>
-<div class="grid">
- <div class="card"><h2>Радио</h2>
-   <div class="big" id="freq">—</div>
-   <div class="row"><span>Режим</span><b id="mode">—</b></div>
- </div>
- <div class="card"><h2>S-метр</h2>
-   <div class="big" id="su" style="margin-bottom:8px">S0</div>
-   <div class="meter"><div id="mbar" style="width:0%"></div></div>
- </div>
- <div class="card"><h2>Декодер</h2>
-   <div class="big"><span id="dsd" class="badge b-idle">—</span></div>
-   <div class="row"><span>Talker Alias</span><b id="alias">—</b></div>
-   <div class="row" id="slotccRow" style="display:none"><span>Таймслот / CC</span><b id="slotcc">—</b></div>
-   <div class="row" id="tgidRow" style="display:none"><span>TG / ID</span><b id="tgid">—</b></div>
- </div>
- <div class="card"><h2>Управление</h2>
-   <div class="row"><span>Громкость</span><span class="val" id="volv">—%</span></div>
-   <input type="range" id="vol" min="0" max="100" step="1">
-   <div class="row"><span>Сквелч</span><span class="val" id="sqlv">— дБ</span></div>
-   <input type="range" id="sql" min="-40" max="0" step="0.5">
- </div>
+<div class="topbar">
+ <span><span class="freqbig" id="freq">—</span> <b id="mode" style="color:var(--mut)">—</b></span>
+ <span class="tsep">|</span>
+ <canvas id="smCv" width="220" height="36" style="flex-shrink:0"></canvas>
+ <span class="tsep">|</span>
+ <span class="dsdinfo">
+   <span id="dsd" class="badge b-idle">—</span>
+   <b id="alias">—</b>
+   <span id="slotccRow" style="display:none;color:var(--mut)"><span id="slotcc"></span></span>
+   <span id="tgidRow" style="display:none;color:var(--mut)"><span id="tgid"></span></span>
+ </span>
+ <button id="gear" title="Настройки" style="flex-shrink:0">⚙</button>
 </div>
-<div class="card" style="margin-top:12px;padding:0;overflow:hidden">
- <div style="padding:14px 14px 0">
-  <h2 style="margin-bottom:6px">Панорама <span id="wfHdr" style="text-transform:none;color:var(--mut);font-weight:400"></span></h2>
-  <div id="bands" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px"></div>
+<div class="card" id="settings" style="display:none;margin-bottom:10px">
+ <div class="row"><span>Громкость динамика</span><span class="val" id="volv">—%</span></div>
+ <input type="range" id="vol" min="0" max="100" step="1">
+ <div class="row"><span>Сквелч</span><span class="val" id="sqlv">— дБ</span></div>
+ <input type="range" id="sql" min="-40" max="0" step="0.5">
+</div>
+<div class="card" style="padding:0;overflow:hidden">
+ <div style="padding:10px 14px 0">
+  <div id="bands" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+   <span id="wfHdr" style="color:var(--mut);font-size:12px;align-self:center;margin-right:6px"></span>
+  </div>
  </div>
  <canvas id="specCv" width="475" height="96" style="cursor:crosshair"></canvas>
  <canvas id="wfCv" width="475" height="260"></canvas>
@@ -93,6 +95,10 @@ input[type=range]{width:100%}
 </div>
 </div><script>
 function debounce(f,ms){var t;return function(){clearTimeout(t);var a=arguments;t=setTimeout(function(){f.apply(null,a)},ms)}}
+document.getElementById('gear').onclick=function(){
+ var s=document.getElementById('settings');
+ s.style.display=(s.style.display==='none')?'':'none';
+};
 var volEl=document.getElementById('vol'), sqlEl=document.getElementById('sql');
 var volDrag=false, sqlDrag=false;
 volEl.addEventListener('pointerdown',()=>volDrag=true);
@@ -105,13 +111,55 @@ volEl.addEventListener('input',debounce(function(){
  fetch('/api/volume',{method:'POST',body:JSON.stringify({pct:+volEl.value})});},150));
 sqlEl.addEventListener('input',debounce(function(){
  fetch('/api/sql',{method:'POST',body:JSON.stringify({db:+sqlEl.value})});},150));
+// --- S-метр в стиле IC-705: сегментная полоса, шкала S1..9 / +20..+60, peak-hold ---
+var smPeak=0, smPeakTs=0;
+function drawSmeter(raw){
+ var cv=document.getElementById('smCv'), c=cv.getContext('2d');
+ var W=cv.width, H=cv.height, L=14, R=W-4;         // поля: слева "S", справа отступ
+ var s9x=L+(R-L)*0.58;                              // 58% шкалы на S0..S9, остальное +60dB
+ function rawToX(v){
+  v=Math.max(0,Math.min(241,v||0));
+  return v<=120 ? L+(v/120)*(s9x-L) : s9x+((v-120)/121)*(R-s9x);
+ }
+ c.clearRect(0,0,W,H);
+ // подпись S и линия шкалы (красная после S9)
+ c.font='10px system-ui'; c.fillStyle='#cfd8e6'; c.textAlign='left';
+ c.fillText('S',2,10);
+ c.strokeStyle='#cfd8e6'; c.lineWidth=1;
+ c.beginPath(); c.moveTo(L,14); c.lineTo(s9x,14); c.stroke();
+ c.strokeStyle='#ff5050';
+ c.beginPath(); c.moveTo(s9x,14); c.lineTo(R,14); c.stroke();
+ // деления и цифры
+ c.textAlign='center';
+ [1,3,5,7,9].forEach(function(s){
+  var x=L+(s/9)*(s9x-L);
+  c.strokeStyle='#cfd8e6'; c.beginPath(); c.moveTo(x,14); c.lineTo(x,10); c.stroke();
+  c.fillStyle='#cfd8e6'; c.fillText(s,x,8);
+ });
+ [20,40,60].forEach(function(db){
+  var x=s9x+(db/60)*(R-s9x);
+  c.strokeStyle='#ff5050'; c.beginPath(); c.moveTo(x,14); c.lineTo(x,10); c.stroke();
+  c.fillStyle='#ff8080'; c.fillText('+'+db,x,8);
+ });
+ // сегментированный бар
+ var x=rawToX(raw), now=Date.now();
+ if(x>=smPeak||now-smPeakTs>1200){smPeak=x;smPeakTs=now;}
+ for(var sx=L;sx<x;sx+=6){
+  c.fillStyle=sx<s9x?'#dfeaff':'#ff5050';
+  c.fillRect(sx,18,4,12);
+ }
+ // peak-hold сегмент
+ if(smPeak>x+4){
+  c.fillStyle=smPeak<s9x?'rgba(223,234,255,.55)':'rgba(255,80,80,.55)';
+  c.fillRect(smPeak,18,3,12);
+ }
+}
 async function tick(){
  try{var r=await fetch('/api/state');var d=await r.json();}catch(e){return;}
  document.getElementById('freq').textContent=d.freq_mhz?d.freq_mhz.toFixed(4)+' MHz':'—';
  if(d.freq_mhz){rxFreqHz=d.freq_mhz*1e6;}
  document.getElementById('mode').textContent=d.mode||'—';
- document.getElementById('su').textContent=d.s_units||'S0';
- document.getElementById('mbar').style.width=Math.min(100,(d.smeter_raw||0)/255*100)+'%';
+ drawSmeter(d.smeter_raw||0);
  var el=document.getElementById('dsd');
  if(d.dsd_state==='digital'){el.className='badge b-dig';el.textContent='ЦИФРА'+(d.dsd_proto?' ('+d.dsd_proto+')':'');}
  else if(d.dsd_state==='analog'){el.className='badge b-analog';el.textContent='АНАЛОГ';}
@@ -129,7 +177,7 @@ async function tick(){
  // TG/ID — для DMR и P25
  var hasId=d.src_id!=null||d.tgt_id!=null;
  document.getElementById('tgidRow').style.display=hasId?'':'none';
- if(hasId){document.getElementById('tgid').textContent=(d.tgt_id||'?')+' / '+(d.src_id||'?');}
+ if(hasId){document.getElementById('tgid').textContent='TG '+(d.tgt_id||'?')+' · ID '+(d.src_id||'?');}
  if(!volDrag && d.volume_pct!=null){volEl.value=d.volume_pct;
    document.getElementById('volv').textContent=d.volume_pct+'%';}
  if(!sqlDrag && d.sql_db!=null){sqlEl.value=d.sql_db;
@@ -248,7 +296,7 @@ var wfCenterHz=null, wfSpanHz=null, rxFreqHz=null;
      pushRow(d.row);
      if(d.center_mhz){
        document.getElementById('wfHdr').textContent=
-         '· '+d.center_mhz.toFixed(4)+' MHz · спан '+(d.span_khz?d.span_khz.toFixed(0):'?')+' кГц';
+         d.center_mhz.toFixed(4)+' MHz · спан '+(d.span_khz?d.span_khz.toFixed(0):'?')+' кГц';
      }
    };
  }
