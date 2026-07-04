@@ -62,6 +62,8 @@ input[type=range]{width:100%}
    <span id="slotccRow" style="display:none;color:var(--mut)"><span id="slotcc"></span></span>
    <span id="tgidRow" style="display:none;color:var(--mut)"><span id="tgid"></span></span>
  </span>
+ <span id="sys" style="color:var(--mut);font-size:12px;min-width:86px;text-align:right">—</span>
+ <span id="pwr" class="badge" style="display:none;font-size:11px">⚡</span>
  <button id="gear" title="Настройки" style="flex-shrink:0">⚙</button>
 </div>
 <div class="card" id="settings" style="display:none;margin-bottom:10px">
@@ -203,6 +205,17 @@ async function tick(){
  if(!sqlDrag && d.sql_db!=null){sqlEl.value=d.sql_db;
    document.getElementById('sqlv').textContent=d.sql_db+' дБ';}
  markChannels(d.audio_channels||'both');
+ // системная строка: температура · загрузка CPU + бейдж проблем питания
+ var sys='—';
+ if(d.cpu_temp!=null){sys=d.cpu_temp+'°C';}
+ if(d.cpu_load!=null){sys+=' · '+d.cpu_load+'%';}
+ document.getElementById('sys').textContent=sys;
+ var pw=document.getElementById('pwr');
+ if(d.power==='uv_now'){pw.style.display='';pw.style.background='#3a1520';pw.style.color='#ff6b6b';
+   pw.textContent='⚡ ПИТАНИЕ';pw.title='Недонапряжение/троттлинг прямо сейчас — проверь блок питания';}
+ else if(d.power==='uv_past'){pw.style.display='';pw.style.background='#3a2f15';pw.style.color='#f5a623';
+   pw.textContent='⚡ было';pw.title='С момента загрузки случалось недонапряжение';}
+ else {pw.style.display='none';}
 }
 tick();setInterval(tick,600);
 
@@ -445,10 +458,14 @@ class Dashboard:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        self.civ = CIV(cfg)
         self.scope = SpectrumAssembler(cfg.scope_history)
-        self.civ.set_scope_callback(self.scope.feed)
-        self.civ.set_scope_output(True)
+        # радио может быть выключено/отключено при старте — поднимаемся без него,
+        # poll_loop подключит CI-V, когда оно появится
+        try:
+            self.civ = self._connect_civ()
+        except Exception as e:
+            print(f"CI-V недоступен при старте ({e}), продолжаю без радио", flush=True)
+            self.civ = None
 
         self.freq = None
         self.mode = None
@@ -456,6 +473,10 @@ class Dashboard:
         self.volume_pct = None
         self.sql_db = None
         self.audio_channels = "both"   # both | left (TS1) | right (TS2)
+        self.cpu_temp = None           # °C
+        self.cpu_load = None           # % по всем ядрам
+        self.power = "ok"              # ok | uv_past | uv_now
+        self._stat_prev = None         # (idle, total) для расчёта загрузки CPU
         self.dsd_state = "idle"     # idle | analog | digital
         self.dsd_proto = None       # DMR | D-STAR | P25p1 | P25p2 | YSF | ...
         self.talker_alias = None
@@ -512,44 +533,87 @@ class Dashboard:
                 pass
             time.sleep(1.0)
 
+    def _connect_civ(self):
+        civ = CIV(self.cfg)
+        civ.set_scope_callback(self.scope.feed)
+        civ.set_scope_output(True)
+        return civ
+
     # --- опрос ---
     def poll_loop(self):
         n = 0
+        civ_retry_at = 0
         while True:
-            try:
-                raw = self.civ.read_smeter_raw()
-                if raw is not None:
-                    self.smeter_raw = raw
-                if n % 5 == 0:   # частота/режим/громкость/sql — реже
-                    f = self.civ.read_frequency()
-                    if f:
-                        self.freq = f
-                    m = self.civ.read_mode()
-                    if m:
-                        self.mode = m
-                    self.volume_pct = self._get_volume()
-                    self._refresh_sql()
-            except Exception as e:
-                # CI-V порт умер (USB-переподключение радио и т.п.) —
-                # переоткрываем с автопоиском, пока не оживёт
-                print(f"CI-V потерян ({e}), переподключение...", flush=True)
-                try:
-                    self.civ.close()
-                except Exception:
-                    pass
-                while True:
-                    time.sleep(5)
+            if self.civ is None:
+                # радио отсутствует — пробуем подключиться раз в 5 секунд
+                if time.time() >= civ_retry_at:
+                    civ_retry_at = time.time() + 5
                     try:
-                        self.civ = CIV(self.cfg)
-                        self.civ.set_scope_callback(self.scope.feed)
-                        self.civ.set_scope_output(True)
-                        print("CI-V переподключён", flush=True)
-                        break
+                        self.civ = self._connect_civ()
+                        print("CI-V подключён", flush=True)
                     except Exception:
-                        continue
+                        pass
+            else:
+                try:
+                    raw = self.civ.read_smeter_raw()
+                    if raw is not None:
+                        self.smeter_raw = raw
+                    if n % 5 == 0:   # частота/режим/громкость/sql — реже
+                        f = self.civ.read_frequency()
+                        if f:
+                            self.freq = f
+                        m = self.civ.read_mode()
+                        if m:
+                            self.mode = m
+                        self.volume_pct = self._get_volume()
+                        self._refresh_sql()
+                except Exception as e:
+                    # порт умер (USB-переподключение радио и т.п.) — цикл выше
+                    # переоткроет его с автопоиском, когда радио вернётся
+                    print(f"CI-V потерян ({e}), жду возвращения радио...", flush=True)
+                    try:
+                        self.civ.close()
+                    except Exception:
+                        pass
+                    self.civ = None
+            if n % 5 == 0:
+                self._refresh_system()   # температура/CPU/питание — и без радио
             self._refresh_dsd_state()
             n += 1
             time.sleep(0.2)
+
+    def _refresh_system(self):
+        """Температура и загрузка CPU, флаги питания (undervoltage/троттлинг)."""
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp") as f:
+                self.cpu_temp = round(int(f.read()) / 1000)
+        except OSError:
+            pass
+        try:
+            with open("/proc/stat") as f:
+                parts = f.readline().split()[1:]
+            vals = [int(x) for x in parts]
+            idle, total = vals[3] + vals[4], sum(vals)
+            if self._stat_prev:
+                di = idle - self._stat_prev[0]
+                dt = total - self._stat_prev[1]
+                if dt > 0:
+                    self.cpu_load = round(100 * (1 - di / dt))
+            self._stat_prev = (idle, total)
+        except (OSError, ValueError, IndexError):
+            pass
+        try:
+            out = subprocess.run(["vcgencmd", "get_throttled"],
+                                 capture_output=True, text=True, timeout=2).stdout
+            flags = int(out.split("=")[1], 16)
+            if flags & 0x5:          # undervoltage или троттлинг прямо сейчас
+                self.power = "uv_now"
+            elif flags & 0x50000:    # случалось с загрузки
+                self.power = "uv_past"
+            else:
+                self.power = "ok"
+        except Exception:
+            pass
 
     def _get_volume(self):
         try:
@@ -619,6 +683,8 @@ class Dashboard:
 
     def tune(self, freq_hz):
         """Перестроить радио (клик по скопу), с округлением к сетке каналов."""
+        if self.civ is None:
+            return
         step = self.cfg.tune_step_hz
         if step:
             freq_hz = round(freq_hz / step) * step
@@ -628,6 +694,8 @@ class Dashboard:
 
     def select_band(self, band):
         """Кнопка диапазона: частота и мода из band-stacking регистра радио."""
+        if self.civ is None:
+            return
         bs = self.civ.read_band_stack(int(band))
         if not bs:
             return
@@ -727,6 +795,9 @@ class Dashboard:
             "volume_pct": self.volume_pct,
             "sql_db": self.sql_db,
             "audio_channels": self.audio_channels,
+            "cpu_temp": self.cpu_temp,
+            "cpu_load": self.cpu_load,
+            "power": self.power,
             "dsd_state": self.dsd_state,
             "dsd_proto": self.dsd_proto,
             "talker_alias": self.talker_alias,
@@ -741,6 +812,8 @@ class Dashboard:
         threading.Thread(target=self.events_tail_loop, daemon=True).start()
 
     def close(self):
+        if self.civ is None:
+            return
         try:
             self.civ.set_scope_output(False)
         except Exception:

@@ -73,6 +73,12 @@ echo "   синк колонок: $SPEAKER"
 sed -i "s|alsa_output.platform-3f00b840.mailbox.stereo-fallback|$SPEAKER|" "$HOME_DIR/config.py"
 sed -i "s|/home/sinty|$HOME_DIR|g" "$HOME_DIR/config.py"
 
+# фильтр-цепочка вывода звука (полоса голоса); имя синка колонок подставляется ниже
+mkdir -p "$HOME_DIR/.config/pipewire/pipewire.conf.d"
+sed "s|alsa_output.platform-3f00b840.mailbox.stereo-fallback|$SPEAKER|" \
+    deploy/speaker-fx.conf > "$HOME_DIR/.config/pipewire/pipewire.conf.d/speaker-fx.conf"
+systemctl --user restart pipewire wireplumber pipewire-pulse 2>/dev/null || true
+
 echo "== 6/7 systemd-юниты и logrotate =="
 for u in icom-demod icom-dsd icom-web; do
     sed -e "s|User=sinty|User=$USER_NAME|" \

@@ -13,8 +13,10 @@ Environment=XDG_RUNTIME_DIR=/run/user/1000
 # не стартуем, пока TCP-сервер GNU Radio не начал слушать
 ExecStartPre=/bin/sh -c 'until ss -tln | grep -q ":7355"; do sleep 0.5; done'
 TimeoutStartSec=60
+# вывод через фильтр-цепочку speakers_fx (deploy/speaker-fx.conf):
+# полоса голоса + смягчение верхов, дальше на колонки
 ExecStart=/usr/local/bin/dsd-fme -8 -i tcp \
-    -o pulse:alsa_output.platform-3f00b840.mailbox.stereo-fallback \
+    -o pulse:speakers_fx \
     -J /home/sinty/dsd_live_iq_events.log
 StandardOutput=append:/home/sinty/dsd_live_iq.log
 StandardError=append:/home/sinty/dsd_live_iq.log
