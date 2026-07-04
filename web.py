@@ -34,12 +34,14 @@ PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 .row{display:flex;justify-content:space-between;align-items:center;margin:6px 0}
 input[type=range]{width:100%}
 .val{color:var(--acc);font-weight:600}
-.topbar{display:flex;gap:14px;align-items:center;flex-wrap:nowrap;background:var(--card);
-  border:1px solid var(--ln);border-radius:10px;padding:0 14px;margin-bottom:10px;
-  height:46px;overflow:hidden;white-space:nowrap}
-.topbar>*{flex-shrink:0}
-.topbar .dsdinfo{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
-  display:flex;gap:8px;align-items:center;white-space:nowrap}
+.topbar{background:var(--card);border:1px solid var(--ln);border-radius:10px;
+  padding:0 14px;margin-bottom:10px;overflow:hidden}
+.trow{display:flex;gap:14px;align-items:center;flex-wrap:nowrap;white-space:nowrap;overflow:hidden}
+.trow1{height:44px}
+.trow1>*{flex-shrink:0}
+.trow2{height:30px;border-top:1px solid var(--ln);gap:10px}
+.trow2 .dsdinfo{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  display:flex;gap:10px;align-items:center;white-space:nowrap}
 .freqbig{font-size:22px;font-weight:700}
 .tsep{color:var(--ln)}
 #gear{background:#0c101a;border:1px solid var(--ln);color:var(--fg);border-radius:6px;
@@ -52,19 +54,22 @@ input[type=range]{width:100%}
 #wfCv,#specCv{display:block;width:100%}
 </style></head><body><div class="wrap">
 <div class="topbar">
- <span><span class="freqbig" id="freq">—</span> <b id="mode" style="color:var(--mut)">—</b></span>
- <span class="tsep">|</span>
- <canvas id="smCv" width="220" height="36" style="flex-shrink:0"></canvas>
- <span class="tsep">|</span>
- <span class="dsdinfo">
+ <div class="trow trow1">
+  <span><span class="freqbig" id="freq">—</span> <b id="mode" style="color:var(--mut)">—</b></span>
+  <span class="tsep">|</span>
+  <canvas id="smCv" width="220" height="36" style="flex-shrink:0"></canvas>
+  <span id="sys" style="color:var(--mut);font-size:12px;min-width:86px;text-align:right;margin-left:auto">—</span>
+  <span id="pwr" class="badge" style="display:none;font-size:11px">⚡</span>
+  <button id="gear" title="Настройки" style="flex-shrink:0">⚙</button>
+ </div>
+ <div class="trow trow2">
+  <span class="dsdinfo">
    <span id="dsd" class="badge b-idle">—</span>
    <b id="alias">—</b>
    <span id="slotccRow" style="display:none;color:var(--mut)"><span id="slotcc"></span></span>
    <span id="tgidRow" style="display:none;color:var(--mut)"><span id="tgid"></span></span>
- </span>
- <span id="sys" style="color:var(--mut);font-size:12px;min-width:86px;text-align:right">—</span>
- <span id="pwr" class="badge" style="display:none;font-size:11px">⚡</span>
- <button id="gear" title="Настройки" style="flex-shrink:0">⚙</button>
+  </span>
+ </div>
 </div>
 <div class="card" id="settings" style="display:none;margin-bottom:10px">
  <div class="row"><span>Громкость динамика</span><span class="val" id="volv">—%</span></div>
@@ -176,11 +181,27 @@ function drawSmeter(raw){
   c.fillRect(smPeak,18,3,12);
  }
 }
+var radioConnected=true;
+function drawRadioLost(){
+ var sp=document.getElementById('specCv'), c=sp.getContext('2d');
+ c.fillStyle='rgba(10,14,23,.72)'; c.fillRect(0,0,sp.width,sp.height);
+ c.fillStyle='#ff6b6b'; c.font='bold 14px system-ui'; c.textAlign='center';
+ c.fillText('ТРАНСИВЕР НЕДОСТУПЕН',sp.width/2,sp.height/2+5);
+}
 async function tick(){
  try{var r=await fetch('/api/state');var d=await r.json();}catch(e){return;}
- document.getElementById('freq').textContent=d.freq_mhz?d.freq_mhz.toFixed(4)+' MHz':'—';
+ radioConnected=d.radio_connected!==false;
+ var fq=document.getElementById('freq');
+ if(!radioConnected){
+   fq.textContent='НЕТ СВЯЗИ С РАДИО';
+   fq.style.color='#ff6b6b'; fq.style.fontSize='15px';
+   drawRadioLost();
+ } else {
+   fq.style.color=''; fq.style.fontSize='';
+   fq.textContent=d.freq_mhz?d.freq_mhz.toFixed(4)+' MHz':'—';
+ }
  if(d.freq_mhz){rxFreqHz=d.freq_mhz*1e6;}
- document.getElementById('mode').textContent=d.mode||'—';
+ document.getElementById('mode').textContent=radioConnected?(d.mode||'—'):'—';
  drawSmeter(d.smeter_raw||0);
  var el=document.getElementById('dsd');
  if(d.dsd_state==='digital'){el.className='badge b-dig';el.textContent='ЦИФРА'+(d.dsd_proto?' ('+d.dsd_proto+')':'');}
@@ -576,6 +597,7 @@ class Dashboard:
                     except Exception:
                         pass
                     self.civ = None
+                    self.smeter_raw = 0   # не показывать зависший S-метр
             if n % 5 == 0:
                 self._refresh_system()   # температура/CPU/питание — и без радио
             self._refresh_dsd_state()
@@ -788,6 +810,7 @@ class Dashboard:
 
     def snapshot(self):
         return {
+            "radio_connected": self.civ is not None,
             "freq_mhz": self.freq / 1e6 if self.freq else None,
             "mode": self.mode,
             "smeter_raw": self.smeter_raw,
